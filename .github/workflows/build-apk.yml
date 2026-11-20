@@ -1,0 +1,89 @@
+name: Universal Android APK Builder
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Extract ZIP
+        shell: bash
+        run: |
+          ZIP=$(find . -maxdepth 1 -iname '*.zip' -type f | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "No ZIP file found!"
+            exit 1
+          fi
+
+          mkdir extracted
+          unzip -q "$ZIP" -d extracted
+
+      - name: Find Project
+        shell: bash
+        run: |
+          ROOT="$GITHUB_WORKSPACE/extracted"
+
+          SETTINGS=$(find "$ROOT" -type f \
+            \( -name settings.gradle -o -name settings.gradle.kts \) \
+            -not -path '*/.gradle/*' | head -n 1)
+
+          if [ -n "$SETTINGS" ]; then
+            PROJECT_DIR=$(dirname "$SETTINGS")
+          else
+            BUILD=$(find "$ROOT" -type f \
+              \( -name build.gradle -o -name build.gradle.kts \) \
+              -not -path '*/.gradle/*' | head -n 1)
+
+            if [ -z "$BUILD" ]; then
+              echo "No Gradle project found in ZIP!"
+              exit 1
+            fi
+
+            PROJECT_DIR=$(dirname "$BUILD")
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Project found: $PROJECT_DIR"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build APK
+        shell: bash
+        run: |
+          cd "$PROJECT_DIR"
+
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew --no-daemon assembleDebug
+          else
+            gradle --no-daemon assembleDebug
+          fi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Android-APK
+          path: extracted/**/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
